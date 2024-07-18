@@ -15,9 +15,10 @@ library
     , containers       >= 0.6.2  && < 0.7
     , mtl              >= 2.2.1  && < 2.3
     , transformers
-    , primitive        >= 0.7    && < 0.8
+    , primitive        
+    -- >= 0.7    && < 0.8
     , uniplate 
-    , ghc
+    , ghc              >=9.2.8
     , template-haskell
 
 test-suite test
