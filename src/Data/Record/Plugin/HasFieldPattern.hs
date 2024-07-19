@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase,TypeApplications #-}
 module Data.Record.Plugin.HasFieldPattern (plugin) where
 
 import Data.Generics.Uniplate.Data
@@ -11,8 +11,15 @@ import Data.Record.Plugin.Shim
 import Control.Monad.Except
 import Language.Haskell.TH (Extension(..))
 import Data.List (intersperse)
-
-
+#if __GLASGOW_HASKELL__ >= 900
+import GHC.Hs
+import GHC.Types.SourceText
+import GHC.Driver.Errors
+import GHC.Types.Error
+import qualified GHC.Hs      as GHC
+import qualified GHC.Plugins as GHC
+import qualified GHC.Utils.Logger as GHC
+#endif
 {-------------------------------------------------------------------------------
   Top-level
 -------------------------------------------------------------------------------}
@@ -89,15 +96,24 @@ mkRecPat l = \case
     getField' = mkRdrQual ghcRecordsCompat $ mkVarOcc "getField"
 
     mkSelector :: FastString -> LHsType GhcPs
-    mkSelector = litT . HsStrTy NoSourceText 
+    mkSelector = litT . HsStrTy NoSourceText
 
     mkTuple :: [LHsExpr GhcPs] -> LHsExpr GhcPs
-    mkTuple xs = L l (ExplicitTuple defExt [L l (Present defExt x) | x <- xs] Boxed)
+    mkTuple xs = 
+#if __GLASGOW_HASKELL__ >= 900
+      L (GHC.noAnnSrcSpan l) (ExplicitTuple defExt [(Present defExt x) | x <- xs] Boxed)
+#else
+      L l (ExplicitTuple defExt [L l (Present defExt x) | x <- xs] Boxed)
+#endif
 
 ghcRecordsCompat = mkModuleName "GHC.Records.Compat"
 
 getFieldSel :: LHsRecField GhcPs (LPat GhcPs) -> Maybe (FastString, LPat GhcPs)
+#if __GLASGOW_HASKELL__ >= 900
+getFieldSel (L _ (HsRecField _ (L _ fieldOcc) arg pun))
+#else
 getFieldSel (L _ (HsRecField (L _ fieldOcc) arg pun))
+#endif
   | FieldOcc _ (L l nm) <- fieldOcc
   , Unqual nm' <- nm
   = Just (occNameFS nm', if pun then nlVarPat nm  else arg)
@@ -153,8 +169,11 @@ isEnabled dynflags (RequiredExtension exts) = any (`xopt` dynflags) exts
 
 -- | Equivalent of 'Language.Haskell.TH.Lib.litT'
 litT :: HsTyLit -> LHsType GhcPs
+#if __GLASGOW_HASKELL__ >= 900
+litT = GHC.wrapXRec @(GhcPs) . HsTyLit defExt
+#else
 litT = noLoc . HsTyLit defExt
-
+#endif
 -- | Construct simple lambda
 --
 -- Constructs lambda of the form
@@ -164,13 +183,32 @@ simpleLam :: RdrName -> LHsExpr GhcPs -> LHsExpr GhcPs
 simpleLam x body = mkHsLam [nlVarPat x] body
 
 mkVar :: SrcSpan -> RdrName -> LHsExpr GhcPs
-mkVar l name = L l $ HsVar defExt (L l name)
+mkVar l name =
+#if __GLASGOW_HASKELL__ >= 900
+  L (GHC.noAnnSrcSpan l) $ HsVar defExt (L (GHC.noAnnSrcSpan l) name)
+#else
+  L l $ HsVar defExt (L l name)
+#endif
 
 mkAppType :: LHsExpr GhcPs -> LHsType GhcPs -> LHsExpr GhcPs
-mkAppType expr typ = noLoc $ HsAppType defExt expr (HsWC defExt typ)
+mkAppType expr typ = 
+#if __GLASGOW_HASKELL__ >= 900
+  GHC.wrapXRec @(GhcPs) $ HsAppType defExt expr (HsWC defExt typ)
+#else
+  noLoc $ HsAppType defExt expr (HsWC defExt typ)
+#endif
 
+#if __GLASGOW_HASKELL__ >= 900
+issueWarning :: SrcSpan -> SDoc -> Hsc ()
+issueWarning l errMsg = do
+  logger <- GHC.getLogger
+  dynFlags <- getDynFlags
+  liftIO $ printOrThrowWarnings logger dynFlags . listToBag . (:[]) $
+    mkWarnMsg l neverQualify errMsg
+#else
 issueWarning :: SrcSpan -> SDoc -> Hsc ()
 issueWarning l errMsg = do
   dynFlags <- getDynFlags
   liftIO $ printOrThrowWarnings dynFlags . listToBag . (:[]) $
     mkWarnMsg dynFlags l neverQualify errMsg
+#endif
