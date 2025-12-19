@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE TypeApplications       #-}
 {-# LANGUAGE UndecidableInstances   #-}
+{-# LANGUAGE DataKinds #-}
 
 -- | Thin compatibility layer around GHC
 --
@@ -52,6 +53,7 @@ module Data.Record.Plugin.Shim (
   , module HscMain
   , module NameCache
   , module TcEvidence
+  , module GHC.Types.Name.Cache
 #else
   , module GHC.Data.Bag
   , module GHC.Driver.Main
@@ -59,7 +61,6 @@ module Data.Record.Plugin.Shim (
   , module GHC.Plugins
   , module GHC.Tc.Types.Evidence
   , module GHC.Types.Basic
-  , module GHC.Types.Name.Cache
   , module GHC.Utils.Error
 #endif
   ) where
@@ -70,6 +71,7 @@ import qualified Data.List.NonEmpty as NE
 
 #if __GLASGOW_HASKELL__ < 900
 
+import GHC.Hs.ImpExp (XImportDeclPass (..))
 import Bag (listToBag, emptyBag)
 import BasicTypes (SourceText(NoSourceText))
 import ConLike (ConLike)
@@ -96,14 +98,19 @@ import GHC.Parser.Annotation (IsUnicodeSyntax(NormalSyntax))
 import GHC.Plugins hiding ((<>), getHscEnv, putLogMsg)
 import GHC.Tc.Types.Evidence (HsWrapper(WpHole))
 import GHC.Types.SourceText (SourceText(NoSourceText))
+import qualified GHC.Parser.Annotation as GHC
+import Unsafe.Coerce (unsafeCoerce)
+#if __GLASGOW_HASKELL__ < 906
 import GHC.Types.Name.Cache (NameCache(nsUniqs))
+#endif
+
 import GHC.Utils.Error (Severity(..))
 import GHC.Types.Basic
 import qualified GHC.Utils.Logger as GHC
 import qualified GHC.Hs      as GHC
 import qualified GHC.Plugins as GHC
-
 #endif
+
 
 {-------------------------------------------------------------------------------
   Miscellaneous
@@ -117,29 +124,52 @@ importDecl name qualified = GHC.wrapXRec @(GhcPs) $
 importDecl name qualified = GHC.noLoc $
 #endif
     ImportDecl {
-      ideclExt       = GHC.noAnn
-    , ideclSourceSrc = NoSourceText
-#if __GLASGOW_HASKELL__ > 900
-    , ideclName      = GHC.wrapXRec @(GhcPs) name
+#if __GLASGOW_HASKELL__ <906
+    ideclExt = GHC.noAnn
 #else
-    , ideclName      = GHC.noLoc name
+    ideclExt =
+      XImportDeclPass
+        { ideclAnn        = GHC.noAnn
+        , ideclSourceText = NoSourceText
+        , ideclImplicit  = False
+        }
 #endif
+#if __GLASGOW_HASKELL__ < 906
+      , ideclSourceSrc = NoSourceText
+#endif
+#if __GLASGOW_HASKELL__ >= 900
+    , ideclName = GHC.wrapXRec @(GhcPs) name
+#else
+    , ideclName = GHC.noLoc name
+#endif
+#if __GLASGOW_HASKELL__ < 906
     , ideclPkgQual   = Nothing
-    , ideclSafe      = False
-    , ideclImplicit  = False
-    , ideclAs        = Nothing
-    , ideclHiding    = Nothing
+#else
+    , ideclPkgQual   = GHC.NoRawPkgQual
+#endif
+    , ideclSafe     = False
+#if __GLASGOW_HASKELL__ < 906
+    , ideclImplicit = False
+#endif
+
+    , ideclAs       = Nothing
+#if __GLASGOW_HASKELL__ < 906
+    , ideclHiding = Nothing
+#else
+    , ideclImportList = Nothing
+#endif
+
 #if __GLASGOW_HASKELL__ < 810
     , ideclQualified = qualified
 #else
     , ideclQualified = if qualified then QualifiedPre else NotQualified
 #endif
 #if __GLASGOW_HASKELL__ < 900
-    , ideclSource    = False
+    , ideclSource = False
 #else
-    , ideclSource    = NotBoot
+    , ideclSource = NotBoot
 #endif
-    }
+  }
 
 conPat :: Located RdrName -> HsConPatDetails GhcPs -> Pat GhcPs
 #if __GLASGOW_HASKELL__ < 900
@@ -161,7 +191,12 @@ type HsModule = GHC.HsModule GhcPs
 type HsModule = GHC.HsModule
 #endif
 
+#if __GLASGOW_HASKELL__ < 906
 type LHsModule = Located HsModule
+#else
+type LHsModule = XRec GhcPs (HsModule GhcPs)
+#endif
+
 type LRdrName  = Located RdrName
 
 #if __GLASGOW_HASKELL__ < 900
@@ -188,7 +223,7 @@ instance HasDefaultExt NoExtField where
   defExt = noExtField
 #endif
 
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ < 906
 instance HasDefaultExt LayoutInfo where
   defExt = NoLayoutInfo
 instance HasDefaultExt (EpAnn [AddEpAnn]) where
@@ -206,11 +241,17 @@ type  HsTyVarBndr pass =  GHC.HsTyVarBndr () pass
 type LHsTyVarBndr pass = GHC.LHsTyVarBndr () pass
 #endif
 
-hsFunTy :: XFunTy pass -> LHsType pass -> LHsType pass -> HsType pass
 #if __GLASGOW_HASKELL__ < 900
+hsFunTy :: XFunTy pass -> LHsType pass -> LHsType pass -> HsType pass
 hsFunTy = HsFunTy
-#else
+#elif __GLASGOW_HASKELL__ < 906
+hsFunTy :: XFunTy pass -> LHsType pass -> LHsType pass -> HsType pass
 hsFunTy ext = HsFunTy ext (HsUnrestrictedArrow NormalSyntax)
+#else
+hsFunTy :: XFunTy pass -> LHsType pass -> LHsType pass -> HsType pass
+hsFunTy ext l1 l2 = 
+  let arrow = unsafeCoerce (noLocA (unLoc noHsUniTok))
+  in HsFunTy ext arrow l1 l2
 #endif
 
 #if __GLASGOW_HASKELL__ < 900
@@ -262,7 +303,7 @@ setDefaultSpecificity :: GHC.LHsTyVarBndr () GhcPs -> GHC.LHsTyVarBndr Specifici
 setDefaultSpecificity x = GHC.wrapXRec @(GhcPs) $ case GHC.unXRec @(GhcPs) x of
     UserTyVar   ext () name      -> UserTyVar   ext SpecifiedSpec name
     KindedTyVar ext () name kind -> KindedTyVar ext SpecifiedSpec name kind
-    XTyVarBndr  ext              -> XTyVarBndr  ext
+    -- XTyVarBndr  ext              -> XTyVarBndr  ext
 #endif
 
 patLoc :: SrcSpan -> Pat (GhcPass id) -> LPat (GhcPass id)
