@@ -23,13 +23,23 @@
         ...
       }: {
         haskellProjects.default = {
-          basePackages = pkgs.haskell.packages.ghc96;
+          basePackages = pkgs.haskell.packages.ghc98;
+          devShell = {
+            tools = hp: {
+              haskell-language-server = null;
+            };
+          };
+
           packages = {
-            record-dot-preprocessor.source="0.2.17";
-            servant.source="0.20.2";
+          };
+          settings = {
+            record-dot-preprocessor.broken=false;
+
           };
         };
+        
         packages.default =  self'.packages.ghc-hasfield-plugin;
+
       };
     };
 }
