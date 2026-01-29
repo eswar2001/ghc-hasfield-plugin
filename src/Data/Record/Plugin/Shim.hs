@@ -100,6 +100,7 @@ import GHC.Tc.Types.Evidence (HsWrapper(WpHole))
 import GHC.Types.SourceText (SourceText(NoSourceText))
 import qualified GHC.Parser.Annotation as GHC
 import Unsafe.Coerce (unsafeCoerce)
+import GHC.Types.Basic (DoPmc(..))
 #if __GLASGOW_HASKELL__ < 906
 import GHC.Types.Name.Cache (NameCache(nsUniqs))
 #endif
@@ -182,7 +183,7 @@ mkFunBind :: Located RdrName -> [LMatch GhcPs (LHsExpr GhcPs)] -> HsBind GhcPs
 #if __GLASGOW_HASKELL__ < 810
 mkFunBind = GHC.mkFunBind
 #else
-mkFunBind lrName lMatch = GHC.mkFunBind Generated (GHC.l2n $ GHC.reLocA lrName) lMatch
+mkFunBind lrName lMatch = GHC.mkFunBind (Generated DoPmc) (GHC.l2n $ GHC.reLocA lrName) lMatch
 #endif
 
 #if __GLASGOW_HASKELL__ < 900

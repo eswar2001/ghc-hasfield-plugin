@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase,TypeApplications #-}
+{-# LANGUAGE NondecreasingIndentation, ScopedTypeVariables #-}
 module Data.Record.Plugin.HasFieldPattern (plugin) where
 
 import Data.Generics.Uniplate.Data
@@ -24,7 +25,7 @@ import qualified GHC.Utils.Logger as GHC
 
 #if __GLASGOW_HASKELL__ >= 906
 import GHC.Driver.Errors (printMessages)
-import GHC.Driver.Errors.Types (GhcMessage(..))
+import GHC.Driver.Errors.Types (GhcMessage(..), DriverMessage( DriverUnknownMessage ))
 import GHC.Driver.Config.Diagnostic (initDiagOpts, initPrintConfig)
 import GHC.Types.Error ( mkPlainDiagnostic, DiagnosticReason(..), singleMessage
   , Messages )
@@ -141,15 +142,6 @@ mkRecPat l = \case
 #endif
   fields -> do
     doImport  
-    let x  = mkRdrUnqual $ mkVarOcc "x"
-    let getFieldsTuple = simpleLam x (mkTuple [mkGetField f `mkHsApp` mkVar l x | (f, _) <- fields])
-#if __GLASGOW_HASKELL__ >= 906
-    let patsTuple = TuplePat noAnn [p | (_, p) <- fields] Boxed
-    return (patLoc l (ViewPat noAnn getFieldsTuple (patLoc l patsTuple)))
-#else
-    let patsTuple = TuplePat defExt [p | (_, p) <- fields] Boxed
-    return (patLoc l (ViewPat defExt getFieldsTuple (patLoc l patsTuple)))
-#endif
     let x  = mkRdrUnqual $ mkVarOcc "x"
     let getFieldsTuple = simpleLam x (mkTuple [mkGetField f `mkHsApp` mkVar l x | (f, _) <- fields])
 #if __GLASGOW_HASKELL__ >= 906
@@ -314,8 +306,12 @@ issueWarning l errMsg = do
   dynFlags <- getDynFlags
   diag_opts <- initDiagOpts <$> getDynFlags
   print_config <- initPrintConfig <$> getDynFlags
-  let diagnostic = (mkPlainDiagnostic WarningWithoutFlag noHints errMsg)
-  let ghcMsg = GhcUnknownMessage (UnknownDiagnostic diagnostic)
+  let diagnostic = mkPlainDiagnostic WarningWithoutFlag noHints errMsg
+  let ghcMsg = GhcUnknownMessage 
+             $ mkUnknownDiagnostic @GhcMessage 
+             $ GhcDriverMessage 
+             $ DriverUnknownMessage 
+             $ mkUnknownDiagnostic @DriverMessage diagnostic
   let msgEnv = mkMsgEnvelope diag_opts l neverQualify ghcMsg
   liftIO $ printOrThrowDiagnostics logger print_config diag_opts (singleMessage msgEnv)
 #endif
