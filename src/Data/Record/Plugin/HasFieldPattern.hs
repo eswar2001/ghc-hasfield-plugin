@@ -301,17 +301,14 @@ issueWarning l errMsg = do
       (listToBag [mkWarnMsg dynFlags l neverQualify errMsg])
 #endif
 #else
+
 issueWarning l errMsg = do
-  logger   <- GHC.getLogger
-  dynFlags <- getDynFlags
-  diag_opts <- initDiagOpts <$> getDynFlags
-  print_config <- initPrintConfig <$> getDynFlags
-  let diagnostic = mkPlainDiagnostic WarningWithoutFlag noHints errMsg
-  let ghcMsg = GhcUnknownMessage 
-             $ mkUnknownDiagnostic @GhcMessage 
-             $ GhcDriverMessage 
-             $ DriverUnknownMessage 
-             $ mkUnknownDiagnostic @DriverMessage diagnostic
-  let msgEnv = mkMsgEnvelope diag_opts l neverQualify ghcMsg
+  logger <- GHC.getLogger
+  dflags <- getDynFlags
+  let diag_opts = initDiagOpts dflags
+      print_config = initPrintConfig dflags
+      diagnostic = mkPlainDiagnostic WarningWithoutFlag noHints errMsg
+      ghcMsg = GhcUnknownMessage $ UnknownDiagnostic (\_ -> NoDiagnosticOpts) diagnostic
+      msgEnv = mkMsgEnvelope diag_opts l neverQualify ghcMsg
   liftIO $ printOrThrowDiagnostics logger print_config diag_opts (singleMessage msgEnv)
 #endif
